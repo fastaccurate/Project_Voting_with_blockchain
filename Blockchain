@@ -1,0 +1,142 @@
+// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+contract VotingSystem {
+    string[] public candidates;
+    mapping(address => bool) private hasVoted;
+    mapping(string => uint) private votes;
+    mapping(address => uint) public voteTimestamps;
+    mapping(address => uint) public voteBlockHeights;
+    mapping(address => uint256) private _VTRbalances;
+    address public owner;
+    bool public electionStarted;
+    string public constant Token = "Votterium Token"; 
+    string public constant symbol = "VTR";
+
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only owner can call this function");
+        _;
+    }
+
+    modifier onlyIfElectionStarted() {
+        require(electionStarted, "Election has not started yet");
+        _;
+    }
+
+    modifier onlyIfElectionNotStarted() {
+        require(!electionStarted, "Election has already started");
+        _;
+    }
+
+    modifier onlyIfElectionEnded() {
+        require(!electionStarted, "Election ongoing, wait for it to end");
+        _;
+    }
+
+    modifier onlyIfHasTokens() {
+        require(_VTRbalances[msg.sender] > 0, "You do not have Votterium Tokens to vote.");
+        _;
+    }
+
+    modifier onlyIfHasNotVoted() {
+        require(!hasVoted[msg.sender], "You have already voted.");
+        _;
+    }
+
+    modifier candidateIndexIsValid(uint candidateIndex) {
+        require(candidateIndex < candidates.length, "Invalid candidate index.");
+        _;
+    }
+
+//The format of input to constructor before deployment 1]_CANDIDATES:["a","b","c"]  2]mint_tokens_to:["0xAddress1", "0xAddress2", "0xAddress3"]
+    constructor(string[] memory _candidates, address[] memory mint_tokens_to) {
+        require(_candidates.length > 0, "At least one candidate is required");
+        require(mint_tokens_to.length > 0, "At least one initial voter is required");
+
+        candidates = _candidates;
+        owner = msg.sender;
+        electionStarted = false;
+
+        for (uint i = 0; i < mint_tokens_to.length; i++) {
+            _VTRbalances[mint_tokens_to[i]] = 1; // Each address starts with 1 Votterium Token
+            hasVoted[mint_tokens_to[i]] = false;
+        }
+    }
+
+    function startElection() public onlyOwner onlyIfElectionNotStarted {
+        electionStarted = true;
+    }
+
+    function endElection() public onlyOwner onlyIfElectionStarted {
+        electionStarted = false;
+    }
+
+//function vote has two layers of security.Both hasVoted[msg.sender] and token balance is checked before allowing to vote
+    function vote(uint candidateIndex) public
+        onlyIfElectionStarted
+        onlyIfHasTokens
+        candidateIndexIsValid(candidateIndex)
+        onlyIfHasNotVoted
+    {
+        hasVoted[msg.sender] = true;
+        votes[candidates[candidateIndex]]++;
+        voteTimestamps[msg.sender] = block.timestamp;
+        voteBlockHeights[msg.sender] = block.number;
+        _VTRbalances[msg.sender] = 0; 
+    }
+
+    function getResults() public view returns (uint[] memory) {
+        uint[] memory result = new uint[](candidates.length);
+        for (uint i = 0; i < candidates.length; i++) {
+            result[i] = votes[candidates[i]];
+        }
+        return result;
+    }
+
+//getWinner function takes care of cases of tie also.
+//when there is tie it returns list of the highscoring candidates who had tie in votes
+    function getWinner() public view onlyIfElectionEnded returns (string memory) {
+        uint maxVotes = 0;
+        string memory winner = "";
+
+        for (uint i = 0; i < candidates.length; i++) {
+            if (votes[candidates[i]] > maxVotes) {
+                maxVotes = votes[candidates[i]];
+                winner = candidates[i];
+            } else if (votes[candidates[i]] == maxVotes) {
+                winner = string(abi.encodePacked(winner, " ", candidates[i]));
+            }
+        }
+
+        if (bytes(winner).length == 0) {
+            return "No winner yet.";
+        } else if (bytes(winner).length > bytes(candidates[0]).length) {
+            return string(abi.encodePacked("There is a tie between", winner));
+        } else {
+            return winner;
+        }
+    }
+
+    function balanceOf(address account) public view onlyOwner returns (uint256) {
+        return _VTRbalances[account];
+    }
+
+    function hasVotedStatus(address account) public view onlyOwner returns (bool) {
+        return hasVoted[account];
+    }
+
+    function Mint_tokens_to(address voter) public onlyOwner onlyIfHasNotVoted {
+        require(_VTRbalances[voter] == 0, "Voter has already received Votterium Tokens.");
+        _VTRbalances[voter] = 1;
+        hasVoted[voter] = false;
+    }
+
+    function addCandidate(string memory candidateName) public onlyOwner onlyIfElectionNotStarted {
+        require(bytes(candidateName).length > 0, "Candidate name cannot be empty");
+        candidates.push(candidateName);
+    }
+
+    function listofCandidates() public view returns (string[] memory) {
+        return candidates;
+    }
+}
